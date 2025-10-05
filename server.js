@@ -163,4 +163,6 @@ io.on('connection', (socket) => {
 // Health check
 app.get('/api/health', (req, res) => res.json({ status: 'OK', timestamp: new Date().toISOString() }));
 
-server.listen(PORT, () => console.log(`🚀 Backend running on http://localhost:${PORT}`));
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 Backend running on port ${PORT}`);
+});
