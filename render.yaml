@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: clearpro-backend
+    env: node
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        sync: false
+      - key: CORS_ORIGIN
+        value: https://your-frontend.onrender.com
+      - key: SOCKET_IO_ALLOWED_ORIGIN
+        value: "*"
+    autoDeploy: true
