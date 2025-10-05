@@ -1,11 +1,4 @@
-const mongoose = require('mongoose');
-
-mongoose.connect(process.env.MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-})
-.then(() => console.log('✅ Connected to MongoDB Atlas'))
-.catch(err => console.error('❌ MongoDB connection error:', err));
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
@@ -16,40 +9,37 @@ const morgan = require('morgan');
 const multer = require('multer');
 const PDFDocument = require('pdfkit');
 const { v4: uuidv4 } = require('uuid');
-const fs = require('fs');
 const path = require('path');
+
+const connectDB = require('./db');
+const seedDatabase = require('./seed');
+const Patient = require('./models/Patient');
+const Notification = require('./models/Notification');
 
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, { cors: { origin: "*" } });
 
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = 'your-secret-key'; // Replace in production
+const JWT_SECRET = process.env.JWT_SECRET;
 
 // Middleware
 app.use(helmet());
-app.use(cors({ origin: 'http://localhost:3000' })); // Adjust for your frontend
+app.use(cors({ origin: process.env.CORS_ORIGIN || '*' }));
 app.use(morgan('combined'));
 app.use(express.json({ limit: '10mb' }));
-app.use('/uploads', express.static('uploads')); // For photo uploads
 
-// In-memory stores (replace with DB)
-let patients = [
-  { id: 'ALN-2025-001', name: 'Sarah Johnson', progress: 45, compliance: 92, startDate: '2025-03-15', endDate: '2025-10-01', ecoScore: 95 },
-  { id: 'ALN-2025-002', name: 'Michael Johnson', progress: 30, compliance: 85, startDate: '2025-02-01', endDate: '2025-09-01', ecoScore: 88 },
-  { id: 'ALN-2025-003', name: 'Emily Chen', progress: 60, compliance: 95, startDate: '2025-01-15', endDate: '2025-08-01', ecoScore: 98 }
-];
+// File uploads directory
+const upload = multer({ dest: path.join(__dirname, 'uploads') });
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-let notifications = [
-  { id: uuidv4(), message: 'Patient Sarah Johnson: Compliance score updated to 95%', type: 'info', date: new Date().toISOString() },
-  { id: uuidv4(), message: 'Lab order #123: Ready for pickup', type: 'success', date: new Date().toISOString() },
-  { id: uuidv4(), message: 'Virtual check-in scheduled for tomorrow', type: 'warning', date: new Date().toISOString() }
-];
+// DB Init + Seed
+(async () => {
+  await connectDB();
+  await seedDatabase();
+})();
 
-// Multer for file uploads
-const upload = multer({ dest: 'uploads/' });
-
-// Auth Middleware (stub)
+// Auth middleware
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -61,12 +51,10 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
-// Routes
-
-// Auth: Login (stub for Dr. Wilson)
+// Auth route
 app.post('/api/auth/login', (req, res) => {
   const { username, password } = req.body;
-  if (username === 'admin' && password === 'password') { // Demo creds
+  if (username === 'admin' && password === 'password') {
     const token = jwt.sign({ user: 'Dr. Jennifer Wilson' }, JWT_SECRET);
     res.json({ token, user: 'Dr. Jennifer Wilson' });
   } else {
@@ -75,80 +63,82 @@ app.post('/api/auth/login', (req, res) => {
 });
 
 // Patients
-app.get('/api/patients', authenticateToken, (req, res) => {
-  // Search & Filter
+app.get('/api/patients', authenticateToken, async (req, res) => {
   const { search, sortBy = 'name' } = req.query;
-  let filtered = patients;
-  if (search) {
-    filtered = patients.filter(p => p.name.toLowerCase().includes(search.toLowerCase()) || p.id.includes(search));
-  }
-  filtered.sort((a, b) => a[sortBy] - b[sortBy]);
-  res.json(filtered);
+  const query = search
+    ? { $or: [{ name: new RegExp(search, 'i') }, { id: new RegExp(search, 'i') }] }
+    : {};
+  const patients = await Patient.find(query).sort(sortBy);
+  res.json(patients);
 });
 
-app.get('/api/patients/:id', authenticateToken, (req, res) => {
-  const patient = patients.find(p => p.id === req.params.id);
+app.get('/api/patients/:id', authenticateToken, async (req, res) => {
+  const patient = await Patient.findOne({ id: req.params.id });
   if (patient) res.json(patient);
   else res.status(404).json({ error: 'Patient not found' });
 });
 
-app.post('/api/patients', authenticateToken, (req, res) => {
-  const newPatient = { id: `ALN-2025-${patients.length + 1}`.padStart(12, '0'), ecoScore: 90, ...req.body };
-  patients.push(newPatient);
-  io.emit('patientAdded', newPatient); // Real-time update
-  res.status(201).json(newPatient);
-});
-
-app.put('/api/patients/:id', authenticateToken, (req, res) => {
-  const index = patients.findIndex(p => p.id === req.params.id);
-  if (index !== -1) {
-    patients[index] = { ...patients[index], ...req.body };
-    io.emit('patientUpdated', patients[index]);
-    res.json(patients[index]);
-  } else {
-    res.status(404).json({ error: 'Patient not found' });
+app.post('/api/patients', authenticateToken, async (req, res) => {
+  try {
+    const newPatient = new Patient(req.body);
+    const saved = await newPatient.save();
+    io.emit('patientAdded', saved);
+    res.status(201).json(saved);
+  } catch (err) {
+    res.status(400).json({ error: 'Failed to create patient' });
   }
 });
 
-// Progress Update
-app.post('/api/patients/:id/progress', authenticateToken, (req, res) => {
-  const patient = patients.find(p => p.id === req.params.id);
-  if (patient) {
-    patient.progress = req.body.progress || patient.progress;
-    patient.compliance = req.body.compliance || patient.compliance;
-    io.emit('progressUpdated', { id: req.params.id, progress: patient.progress, compliance: patient.compliance });
-    res.json(patient);
-  } else {
-    res.status(404).json({ error: 'Patient not found' });
-  }
+app.put('/api/patients/:id', authenticateToken, async (req, res) => {
+  const updated = await Patient.findOneAndUpdate(
+    { id: req.params.id },
+    { $set: req.body },
+    { new: true }
+  );
+  if (updated) {
+    io.emit('patientUpdated', updated);
+    res.json(updated);
+  } else res.status(404).json({ error: 'Patient not found' });
 });
 
-// Photo Upload & AI Analysis (Mock)
-app.post('/api/patients/:id/photo', authenticateToken, upload.single('photo'), (req, res) => {
-  // Mock AI: Analyze image (in production, use TensorFlow.js or AWS Rekognition)
+app.post('/api/patients/:id/progress', authenticateToken, async (req, res) => {
+  const updated = await Patient.findOneAndUpdate(
+    { id: req.params.id },
+    { $set: { progress: req.body.progress, compliance: req.body.compliance } },
+    { new: true }
+  );
+  if (updated) {
+    io.emit('progressUpdated', { id: updated.id, progress: updated.progress, compliance: updated.compliance });
+    res.json(updated);
+  } else res.status(404).json({ error: 'Patient not found' });
+});
+
+// Photo upload + AI mock
+app.post('/api/patients/:id/photo', authenticateToken, upload.single('photo'), async (req, res) => {
   const analysis = {
     fitScore: Math.floor(Math.random() * 20) + 80,
     improvement: Math.floor(Math.random() * 10) + 5,
-    recommendation: 'Excellent fit! Continue with current aligner.'
+    recommendation: 'Excellent fit! Continue with current aligner.',
   };
   res.json({ ...analysis, filePath: req.file ? `/uploads/${req.file.filename}` : null });
 });
 
 // Notifications
-app.get('/api/notifications', authenticateToken, (req, res) => {
-  res.json(notifications);
+app.get('/api/notifications', authenticateToken, async (req, res) => {
+  const notes = await Notification.find().sort({ date: -1 });
+  res.json(notes);
 });
 
-app.post('/api/notifications', authenticateToken, (req, res) => {
-  const newNotif = { id: uuidv4(), ...req.body, date: new Date().toISOString() };
-  notifications.push(newNotif);
-  io.emit('newNotification', newNotif);
-  res.status(201).json(newNotif);
+app.post('/api/notifications', authenticateToken, async (req, res) => {
+  const newNotif = new Notification({ message: req.body.message, type: req.body.type });
+  const saved = await newNotif.save();
+  io.emit('newNotification', saved);
+  res.status(201).json(saved);
 });
 
-// PDF Export
-app.get('/api/patients/:id/export', authenticateToken, (req, res) => {
-  const patient = patients.find(p => p.id === req.params.id);
+// PDF export
+app.get('/api/patients/:id/export', authenticateToken, async (req, res) => {
+  const patient = await Patient.findOne({ id: req.params.id });
   if (!patient) return res.status(404).json({ error: 'Patient not found' });
 
   const doc = new PDFDocument();
@@ -163,23 +153,14 @@ app.get('/api/patients/:id/export', authenticateToken, (req, res) => {
   doc.end();
 });
 
-// WebSockets for Real-time
+// WebSockets
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
-  socket.emit('welcome', { message: 'Connected to ClearProPro backend' });
-
-  socket.on('joinPatient', (patientId) => {
-    socket.join(patientId);
-  });
-
-  socket.on('disconnect', () => {
-    console.log('User disconnected:', socket.id);
-  });
+  socket.emit('welcome', { message: 'Connected to ClearPro backend' });
+  socket.on('disconnect', () => console.log('User disconnected:', socket.id));
 });
 
-// Health Check
+// Health check
 app.get('/api/health', (req, res) => res.json({ status: 'OK', timestamp: new Date().toISOString() }));
 
-server.listen(PORT, () => {
-  console.log(`🚀 Clear Aligner Case Tracker Pro Backend running on http://localhost:${PORT}`);
-});
+server.listen(PORT, () => console.log(`🚀 Backend running on http://localhost:${PORT}`));
