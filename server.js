@@ -21,25 +21,30 @@ const server = http.createServer(app);
 const io = socketIo(server, { cors: { origin: "*" } });
 
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET;
+const JWT_SECRET = process.env.JWT_SECRET || 'default-secret';
 
-// Middleware
+// ✅ Middleware
 app.use(helmet());
 app.use(cors({ origin: process.env.CORS_ORIGIN || '*' }));
 app.use(morgan('combined'));
 app.use(express.json({ limit: '10mb' }));
 
-// File uploads directory
+// ✅ File uploads setup
 const upload = multer({ dest: path.join(__dirname, 'uploads') });
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// DB Init + Seed
+// ✅ Connect to MongoDB Atlas + seed data
 (async () => {
-  await connectDB();
-  await seedDatabase();
+  try {
+    await connectDB();
+    await seedDatabase();
+    console.log('✅ MongoDB connected & seeded successfully!');
+  } catch (err) {
+    console.error('❌ MongoDB connection failed:', err);
+  }
 })();
 
-// Auth middleware
+// ✅ Auth middleware
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -51,10 +56,15 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
-// Auth route
+// ✅ Root route for Render health check
+app.get('/', (req, res) => {
+  res.send('✅ Clear Aligner Tracker Backend is Running!');
+});
+
+// ✅ Auth route
 app.post('/api/auth/login', (req, res) => {
   const { username, password } = req.body;
-  if (username === 'admin' && password === 'password') {
+  if (username === process.env.ADMIN_USERNAME && password === process.env.ADMIN_PASSWORD) {
     const token = jwt.sign({ user: 'Dr. Jennifer Wilson' }, JWT_SECRET);
     res.json({ token, user: 'Dr. Jennifer Wilson' });
   } else {
@@ -62,7 +72,7 @@ app.post('/api/auth/login', (req, res) => {
   }
 });
 
-// Patients
+// ✅ Patients routes
 app.get('/api/patients', authenticateToken, async (req, res) => {
   const { search, sortBy = 'name' } = req.query;
   const query = search
@@ -113,7 +123,7 @@ app.post('/api/patients/:id/progress', authenticateToken, async (req, res) => {
   } else res.status(404).json({ error: 'Patient not found' });
 });
 
-// Photo upload + AI mock
+// ✅ Photo upload + AI mock
 app.post('/api/patients/:id/photo', authenticateToken, upload.single('photo'), async (req, res) => {
   const analysis = {
     fitScore: Math.floor(Math.random() * 20) + 80,
@@ -123,7 +133,7 @@ app.post('/api/patients/:id/photo', authenticateToken, upload.single('photo'), a
   res.json({ ...analysis, filePath: req.file ? `/uploads/${req.file.filename}` : null });
 });
 
-// Notifications
+// ✅ Notifications
 app.get('/api/notifications', authenticateToken, async (req, res) => {
   const notes = await Notification.find().sort({ date: -1 });
   res.json(notes);
@@ -136,7 +146,7 @@ app.post('/api/notifications', authenticateToken, async (req, res) => {
   res.status(201).json(saved);
 });
 
-// PDF export
+// ✅ PDF export
 app.get('/api/patients/:id/export', authenticateToken, async (req, res) => {
   const patient = await Patient.findOne({ id: req.params.id });
   if (!patient) return res.status(404).json({ error: 'Patient not found' });
@@ -153,16 +163,17 @@ app.get('/api/patients/:id/export', authenticateToken, async (req, res) => {
   doc.end();
 });
 
-// WebSockets
+// ✅ WebSockets
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
   socket.emit('welcome', { message: 'Connected to ClearPro backend' });
   socket.on('disconnect', () => console.log('User disconnected:', socket.id));
 });
 
-// Health check
+// ✅ Health check
 app.get('/api/health', (req, res) => res.json({ status: 'OK', timestamp: new Date().toISOString() }));
 
+// ✅ Important for Render: listen on all network interfaces (0.0.0.0)
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Backend running on port ${PORT}`);
 });
