@@ -1,26 +1,29 @@
-// Load environment variables
-require('dotenv').config();
+// =============================================
+// ✅ Clear Aligner Tracker Pro - Full Backend
+// =============================================
 
-// Core imports
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const helmet = require('helmet');
-const morgan = require('morgan');
+const jwt = require('jsonwebtoken');
 const http = require('http');
 const socketIo = require('socket.io');
-const path = require('path');
-const jwt = require('jsonwebtoken');
+const helmet = require('helmet');
+const morgan = require('morgan');
 const multer = require('multer');
 const PDFDocument = require('pdfkit');
 const { v4: uuidv4 } = require('uuid');
+const path = require('path');
 
-// Custom modules
+// 🧠 Mongo + Models
 const connectDB = require('./db');
 const seedDatabase = require('./seed');
 const Patient = require('./models/Patient');
 const Notification = require('./models/Notification');
 
-// Express + Socket.IO setup
+// ---------------------------------------------
+// ✅ App + Server + WebSocket
+// ---------------------------------------------
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
@@ -28,34 +31,42 @@ const io = socketIo(server, {
     origin: "*",
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
-  }
+  },
 });
 
-// ✅ Environment variables & defaults
+// ---------------------------------------------
+// ✅ Environment Variables
+// ---------------------------------------------
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'default-secret';
 
-// ✅ Middleware setup
+// ---------------------------------------------
+// ✅ Middleware
+// ---------------------------------------------
 app.use(helmet());
 app.use(express.json({ limit: '10mb' }));
 
-// ✅ Full CORS setup (handles mobile, localhost, or hosted frontends)
+// Full CORS setup
 const corsOptions = {
   origin: process.env.CORS_ORIGIN || "*",
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
-  credentials: false
+  credentials: false,
 };
 app.use(cors(corsOptions));
-app.options('*', cors(corsOptions)); // handle preflight requests
+app.options('*', cors(corsOptions));
 
 app.use(morgan('combined'));
 
-// ✅ File upload setup
+// ---------------------------------------------
+// ✅ File Upload Config
+// ---------------------------------------------
 const upload = multer({ dest: path.join(__dirname, 'uploads') });
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// ✅ MongoDB Connection + Seed
+// ---------------------------------------------
+// ✅ MongoDB Connection
+// ---------------------------------------------
 (async () => {
   try {
     await connectDB();
@@ -66,57 +77,9 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
   }
 })();
 
-// ✅ Health check for Render uptime monitoring
-app.get('/', (req, res) => {
-  res.send('✅ Clear Aligner Tracker Backend is Running and Ready!');
-});
-require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const jwt = require('jsonwebtoken');
-const http = require('http');
-const socketIo = require('socket.io');
-const helmet = require('helmet');
-const morgan = require('morgan');
-const multer = require('multer');
-const PDFDocument = require('pdfkit');
-const { v4: uuidv4 } = require('uuid');
-const path = require('path');
-
-const connectDB = require('./db');
-const seedDatabase = require('./seed');
-const Patient = require('./models/Patient');
-const Notification = require('./models/Notification');
-
-const app = express();
-const server = http.createServer(app);
-const io = socketIo(server, { cors: { origin: "*" } });
-
-const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET || 'default-secret';
-
-// ✅ Middleware
-app.use(helmet());
-app.use(cors({ origin: process.env.CORS_ORIGIN || '*' }));
-app.use(morgan('combined'));
-app.use(express.json({ limit: '10mb' }));
-
-// ✅ File uploads setup
-const upload = multer({ dest: path.join(__dirname, 'uploads') });
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
-// ✅ Connect to MongoDB Atlas + seed data
-(async () => {
-  try {
-    await connectDB();
-    await seedDatabase();
-    console.log('✅ MongoDB connected & seeded successfully!');
-  } catch (err) {
-    console.error('❌ MongoDB connection failed:', err);
-  }
-})();
-
-// ✅ Auth middleware
+// ---------------------------------------------
+// ✅ JWT Auth Middleware
+// ---------------------------------------------
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -128,12 +91,21 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
-// ✅ Root route for Render health check
-app.get('/', (req, res) => {
-  res.send('✅ Clear Aligner Tracker Backend is Running!');
+// ---------------------------------------------
+// ✅ API ROUTES
+// ---------------------------------------------
+
+// Health check
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
-// ✅ Auth route
+// Root (Render uptime ping)
+app.get('/', (req, res) => {
+  res.send('✅ Clear Aligner Tracker Backend + Frontend is Running!');
+});
+
+// Auth route
 app.post('/api/auth/login', (req, res) => {
   const { username, password } = req.body;
   if (username === process.env.ADMIN_USERNAME && password === process.env.ADMIN_PASSWORD) {
@@ -144,7 +116,7 @@ app.post('/api/auth/login', (req, res) => {
   }
 });
 
-// ✅ Patients routes
+// Get all patients
 app.get('/api/patients', authenticateToken, async (req, res) => {
   const { search, sortBy = 'name' } = req.query;
   const query = search
@@ -154,12 +126,14 @@ app.get('/api/patients', authenticateToken, async (req, res) => {
   res.json(patients);
 });
 
+// Get single patient
 app.get('/api/patients/:id', authenticateToken, async (req, res) => {
   const patient = await Patient.findOne({ id: req.params.id });
   if (patient) res.json(patient);
   else res.status(404).json({ error: 'Patient not found' });
 });
 
+// Create patient
 app.post('/api/patients', authenticateToken, async (req, res) => {
   try {
     const newPatient = new Patient(req.body);
@@ -171,6 +145,7 @@ app.post('/api/patients', authenticateToken, async (req, res) => {
   }
 });
 
+// Update patient
 app.put('/api/patients/:id', authenticateToken, async (req, res) => {
   const updated = await Patient.findOneAndUpdate(
     { id: req.params.id },
@@ -183,6 +158,7 @@ app.put('/api/patients/:id', authenticateToken, async (req, res) => {
   } else res.status(404).json({ error: 'Patient not found' });
 });
 
+// Progress update
 app.post('/api/patients/:id/progress', authenticateToken, async (req, res) => {
   const updated = await Patient.findOneAndUpdate(
     { id: req.params.id },
@@ -190,12 +166,16 @@ app.post('/api/patients/:id/progress', authenticateToken, async (req, res) => {
     { new: true }
   );
   if (updated) {
-    io.emit('progressUpdated', { id: updated.id, progress: updated.progress, compliance: updated.compliance });
+    io.emit('progressUpdated', {
+      id: updated.id,
+      progress: updated.progress,
+      compliance: updated.compliance,
+    });
     res.json(updated);
   } else res.status(404).json({ error: 'Patient not found' });
 });
 
-// ✅ Photo upload + AI mock
+// Upload photo
 app.post('/api/patients/:id/photo', authenticateToken, upload.single('photo'), async (req, res) => {
   const analysis = {
     fitScore: Math.floor(Math.random() * 20) + 80,
@@ -205,7 +185,7 @@ app.post('/api/patients/:id/photo', authenticateToken, upload.single('photo'), a
   res.json({ ...analysis, filePath: req.file ? `/uploads/${req.file.filename}` : null });
 });
 
-// ✅ Notifications
+// Notifications
 app.get('/api/notifications', authenticateToken, async (req, res) => {
   const notes = await Notification.find().sort({ date: -1 });
   res.json(notes);
@@ -218,7 +198,7 @@ app.post('/api/notifications', authenticateToken, async (req, res) => {
   res.status(201).json(saved);
 });
 
-// ✅ PDF export
+// PDF Export
 app.get('/api/patients/:id/export', authenticateToken, async (req, res) => {
   const patient = await Patient.findOne({ id: req.params.id });
   if (!patient) return res.status(404).json({ error: 'Patient not found' });
@@ -235,17 +215,26 @@ app.get('/api/patients/:id/export', authenticateToken, async (req, res) => {
   doc.end();
 });
 
-// ✅ WebSockets
-io.on('connection', (socket) => {
-  console.log('User connected:', socket.id);
-  socket.emit('welcome', { message: 'Connected to ClearPro backend' });
-  socket.on('disconnect', () => console.log('User disconnected:', socket.id));
+// ---------------------------------------------
+// ✅ FRONTEND STATIC HOSTING (No CORS Needed)
+// ---------------------------------------------
+app.use(express.static(path.join(__dirname, 'public')));
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// ✅ Health check
-app.get('/api/health', (req, res) => res.json({ status: 'OK', timestamp: new Date().toISOString() }));
+// ---------------------------------------------
+// ✅ WebSockets
+// ---------------------------------------------
+io.on('connection', (socket) => {
+  console.log('🟢 Client connected:', socket.id);
+  socket.emit('welcome', { message: 'Connected to Clear Aligner Tracker backend' });
+  socket.on('disconnect', () => console.log('🔴 Client disconnected:', socket.id));
+});
 
-// ✅ Important for Render: listen on all network interfaces (0.0.0.0)
+// ---------------------------------------------
+// ✅ Server Listen (Render-compatible)
+// ---------------------------------------------
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Backend running on port ${PORT}`);
+  console.log(`🚀 Backend + Frontend running on port ${PORT}`);
 });
