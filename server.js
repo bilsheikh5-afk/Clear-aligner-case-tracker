@@ -1,3 +1,75 @@
+// Load environment variables
+require('dotenv').config();
+
+// Core imports
+const express = require('express');
+const cors = require('cors');
+const helmet = require('helmet');
+const morgan = require('morgan');
+const http = require('http');
+const socketIo = require('socket.io');
+const path = require('path');
+const jwt = require('jsonwebtoken');
+const multer = require('multer');
+const PDFDocument = require('pdfkit');
+const { v4: uuidv4 } = require('uuid');
+
+// Custom modules
+const connectDB = require('./db');
+const seedDatabase = require('./seed');
+const Patient = require('./models/Patient');
+const Notification = require('./models/Notification');
+
+// Express + Socket.IO setup
+const app = express();
+const server = http.createServer(app);
+const io = socketIo(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  }
+});
+
+// ✅ Environment variables & defaults
+const PORT = process.env.PORT || 3000;
+const JWT_SECRET = process.env.JWT_SECRET || 'default-secret';
+
+// ✅ Middleware setup
+app.use(helmet());
+app.use(express.json({ limit: '10mb' }));
+
+// ✅ Full CORS setup (handles mobile, localhost, or hosted frontends)
+const corsOptions = {
+  origin: process.env.CORS_ORIGIN || "*",
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: false
+};
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions)); // handle preflight requests
+
+app.use(morgan('combined'));
+
+// ✅ File upload setup
+const upload = multer({ dest: path.join(__dirname, 'uploads') });
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// ✅ MongoDB Connection + Seed
+(async () => {
+  try {
+    await connectDB();
+    await seedDatabase();
+    console.log('✅ MongoDB connected & seeded successfully!');
+  } catch (err) {
+    console.error('❌ MongoDB connection failed:', err);
+  }
+})();
+
+// ✅ Health check for Render uptime monitoring
+app.get('/', (req, res) => {
+  res.send('✅ Clear Aligner Tracker Backend is Running and Ready!');
+});
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
